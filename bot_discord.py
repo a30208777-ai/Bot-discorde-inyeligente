@@ -677,8 +677,29 @@ def iniciar_servidor_saude():
     print(f"Servidor de saúde na porta {porta}")
 
 
+# ----- Auto-acesso: o bot acessa a própria URL a cada X segundos (mantém o serviço acordado) -----
+SELF_URL = os.getenv("SELF_URL", "https://bot-discorde-frankfurt.onrender.com/")
+PING_INTERVALO = int(os.getenv("PING_INTERVALO", "5"))
+
+
+def iniciar_auto_acesso():
+    import time
+
+    def loop():
+        while True:
+            try:
+                requests.get(SELF_URL, timeout=10)
+            except requests.RequestException as e:
+                print(f"[auto-acesso] falhou: {e}")
+            time.sleep(PING_INTERVALO)
+
+    threading.Thread(target=loop, daemon=True).start()
+    print(f"Auto-acesso a cada {PING_INTERVALO}s em {SELF_URL}")
+
+
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("Defina a variável DISCORD_TOKEN.")
     iniciar_servidor_saude()
+    iniciar_auto_acesso()
     bot.run(TOKEN)
