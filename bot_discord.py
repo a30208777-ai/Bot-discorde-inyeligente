@@ -148,7 +148,7 @@ def salvar_mensagem_discord(msg: discord.Message):
         print(f"[aviso] não salvei a mensagem no Supabase: {e}")
 
 
-def historico_canal(channel_id: int, limite: int = 30) -> str:
+def historico_canal(channel_id: int, limite: int = 40) -> str:
     """Últimas mensagens do canal, da mais antiga para a mais nova (só deste canal)."""
     try:
         resp = requests.get(
@@ -222,8 +222,38 @@ def gravar_inscricao(discord_user_id: int, discord_nome: str, nick: str, raca: s
         return False
 
 
+def registrar_canal_criado(guild_id: int, channel_id: int, nome: str):
+    try:
+        requests.post(
+            f"{core.SUPABASE_URL}/rest/v1/canais_criados_pela_ia?on_conflict=channel_id",
+            headers={**core.SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={"guild_id": str(guild_id), "channel_id": str(channel_id), "nome": nome[:100]},
+            timeout=10,
+        ).raise_for_status()
+    except requests.RequestException as e:
+        print(f"[erro ao registrar canal criado] {e}")
+
+
+def canal_criado_pela_ia(channel_id: int) -> bool:
+    try:
+        resp = requests.get(
+            f"{core.SUPABASE_URL}/rest/v1/canais_criados_pela_ia",
+            headers={**core.SUPABASE_HEADERS, "Prefer": ""},
+            params={"channel_id": f"eq.{channel_id}", "select": "channel_id"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return len(resp.json()) > 0
+    except (requests.RequestException, ValueError):
+        return False
+
+
 def canal_evento(canal) -> bool:
-    return isinstance(canal, discord.TextChannel) and "participar-do-evento" in canal.name.lower()
+    """Só canais que começam com 🎫・participar-do-evento- usam o prompt do evento."""
+    if not isinstance(canal, discord.TextChannel):
+        return False
+    nome = re.sub(r"^[^a-z0-9]+", "", canal.name.lower())  # ignora o emoji e o separador
+    return nome.startswith("participar-do-evento-")
 
 
 def responder_ticket(texto: str, channel_id: int = 0, guild_id: int = 0, autor_id: int = 0, autor_admin: bool = False, prompt: str = None):
@@ -533,11 +563,14 @@ async def executar_config(guild: discord.Guild, acoes: list) -> list:
             elif tipo == "criar_canal":
                 cat = discord.utils.get(guild.categories, name=a.get("categoria") or "")
                 novo = await guild.create_text_channel(nome_canal_valido(a["nome"]), category=cat)
+                await asyncio.to_thread(registrar_canal_criado, guild.id, novo.id, novo.name)
                 resultados.append(f"Canal criado: #{novo.name}")
             elif tipo == "renomear_canal":
                 canal = discord.utils.get(guild.channels, name=a["de"])
                 if canal is None:
                     resultados.append(f"Canal não encontrado: {a['de']}")
+                elif not await asyncio.to_thread(canal_criado_pela_ia, canal.id):
+                    resultados.append(f"Não posso renomear #{canal.name}: só mexo em canais que eu criei.")
                 else:
                     await canal.edit(name=nome_canal_valido(a["para"]))
                     resultados.append(f"Canal renomeado: {a['de']} -> {a['para']}")
@@ -548,6 +581,8 @@ async def executar_config(guild: discord.Guild, acoes: list) -> list:
                 canal = discord.utils.get(guild.text_channels, name=a["canal"])
                 if canal is None:
                     resultados.append(f"Canal não encontrado: {a['canal']}")
+                elif not await asyncio.to_thread(canal_criado_pela_ia, canal.id):
+                    resultados.append(f"Não posso editar #{canal.name}: só mexo em canais que eu criei.")
                 else:
                     await canal.edit(topic=str(a["topico"])[:1024])
                     resultados.append(f"Tópico atualizado em #{canal.name}")
@@ -567,6 +602,9 @@ async def executar_config(guild: discord.Guild, acoes: list) -> list:
                 if not cargos:
                     resultados.append(f"Cargo não encontrado: {nome_cargo}")
                 for canal in canais:
+                    if not await asyncio.to_thread(canal_criado_pela_ia, canal.id):
+                        resultados.append(f"Pulei #{canal.name}: não mexo em permissões de canais que já existiam.")
+                        continue
                     for cargo in cargos:
                         permissao = canal.overwrites_for(cargo)
                         for nome_perm, valor in (a.get("permissoes") or {}).items():
