@@ -176,11 +176,13 @@ async def on_message(msg: discord.Message):
 
     if not servidor_permitido(msg.guild) or not MODO_AUTO or not msg.content:
         return
-    if eh_admin(msg.author):
-        return
-
+    # A IA responde a todos (inclusive administradores), exceto em canais pausados e comandos.
     if msg.channel.id not in PAUSADOS and not msg.content.startswith("/"):
         await atender_ticket(msg)
+
+    # Moderação não se aplica a administradores.
+    if eh_admin(msg.author):
+        return
 
     d = await asyncio.to_thread(classificar, msg.content[:1500])
     if not d:
