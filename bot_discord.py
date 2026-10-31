@@ -28,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 os.environ.setdefault("PASTA_IA", os.path.expanduser("~/bot_discord_dados"))
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 import chat_ias as core
@@ -155,7 +156,14 @@ class AprovacaoBanimento(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    print(f"Bot logado como {bot.user}. Servidores permitidos: {len(SERVIDORES_PERMITIDOS)}")
+    # Registra os comandos no menu "/" de cada servidor (aparece na hora).
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+        except discord.HTTPException as e:
+            print(f"[erro ao sincronizar comandos em {guild.name}] {e}")
+    print(f"Bot logado como {bot.user}. Comandos sincronizados em {len(bot.guilds)} servidor(es).")
 
 
 @bot.event
@@ -246,6 +254,49 @@ async def modo(ctx: commands.Context, estado: str = ""):
     elif estado.lower() == "off":
         MODO_AUTO = False
     await ctx.send(f"Modo automático: {'ligado' if MODO_AUTO else 'desligado'}.")
+
+
+# ----- Comandos de barra (aparecem no menu "/" do Discord) -----
+@bot.tree.command(name="modo", description="Liga ou desliga a moderação automática (só administradores)")
+@app_commands.describe(estado="on para ligar, off para desligar")
+@app_commands.choices(estado=[
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+])
+async def modo_barra(interaction: discord.Interaction, estado: str):
+    global MODO_AUTO
+    if not eh_admin(interaction.user):
+        await interaction.response.send_message("Só administradores podem mudar o modo.", ephemeral=True)
+        return
+    MODO_AUTO = estado == "on"
+    await interaction.response.send_message(f"Modo automático: {'ligado' if MODO_AUTO else 'desligado'}.")
+
+
+@bot.tree.command(name="ticket", description="Pausa ou retoma a IA neste canal (só administradores)")
+@app_commands.describe(acao="not para pausar (atendimento humano), yes para retomar a IA")
+@app_commands.choices(acao=[
+    app_commands.Choice(name="not (pausar a IA)", value="not"),
+    app_commands.Choice(name="yes (retomar a IA)", value="yes"),
+])
+async def ticket_barra(interaction: discord.Interaction, acao: str):
+    if not eh_admin(interaction.user):
+        await interaction.response.send_message("Só administradores podem usar este comando.", ephemeral=True)
+        return
+    if acao == "not":
+        PAUSADOS.add(interaction.channel_id)
+        await interaction.response.send_message("Atendimento humano iniciado neste canal. A IA está pausada aqui.")
+    else:
+        PAUSADOS.discard(interaction.channel_id)
+        await interaction.response.send_message("A IA voltou a falar neste canal.")
+
+
+@bot.tree.command(name="status", description="Mostra o estado do bot")
+async def status_barra(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        f"Modo automático: {'ligado' if MODO_AUTO else 'desligado'} | "
+        f"Canal pausado: {'sim' if interaction.channel_id in PAUSADOS else 'não'}",
+        ephemeral=True,
+    )
 
 
 @bot.command(name="status")
