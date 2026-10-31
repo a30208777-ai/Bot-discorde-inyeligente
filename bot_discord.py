@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # Pasta de dados do bot (separada da pasta da IA de arquivos).
 os.environ.setdefault("PASTA_IA", os.path.expanduser("~/bot_discord_dados"))
 
+import requests
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -64,15 +65,14 @@ PROMPT_EVENTO = '''Você é a Hayley, atendente virtual do evento Survival do "M
 
 Papel: registrar participantes e tirar dúvidas sobre as regras do evento. Encaminhe para a equipe o que estiver fora do seu alcance. Você não tem acesso a cargos, permissões nem a outros sistemas do servidor.
 
-REGISTRO (fluxo com o bot)
+REGISTRO
 O jogador pode informar nick e raça em uma mesma mensagem ou em mensagens separadas. Extraia os dois valores de qualquer formato, por exemplo: "Nick: nome raça: lobisomem" ou "meu nick é nome, sou lobisomem".
 - Se faltar nick ou raça, peça só o que falta, em uma frase.
-- Raças válidas, sempre enviadas exatamente assim: Lobisomem, Vampiro, Fada e Aleatório (Mistério de eventos). Se o jogador escrever em outro formato, converta para o nome exato da lista antes de enviar ao bot. Se a raça for inválida, liste as válidas e peça para escolher.
-- Quando tiver nick e raça válidos, envie ao bot uma única mensagem: <@1565229324066357300> nick: [NICK] raça: [RAÇA], onde [RAÇA] é o nome exato da lista.
+- Raças válidas: Lobisomem, Vampiro, Fada e Aleatório (Mistério de eventos). Se o jogador escrever em outro formato, use o nome exato da lista. Se a raça for inválida, liste as válidas e peça para escolher.
+- Quando tiver nick e raça válidos, escreva numa linha separada, exatamente neste formato: [REGISTRAR: NICK | RAÇA], com o nick e a raça exatos. O sistema grava o registro e você não precisa dizer nada sobre isso.
 - Não invente, complete nem corrija nick ou raça.
 - Não diga "aguarde" nem narre o processo.
-- Só confirme o registro ao jogador depois que o bot responder com a confirmação.
-- Se o bot não responder, diga ao jogador que a equipe vai verificar e ofereça atendimento humano.
+- Depois do registro, confirme ao jogador de forma simples, com o nick e a raça.
 
 REGRAS DO EVENTO (repita ao confirmar um registro)
 - O server abre às 11h. A pessoa precisa aparecer no Max às 11:50, senão não poderá mais entrar, só assistir.
@@ -193,6 +193,33 @@ def historico_adm(guild_id: int, autor_id: int, limite: int = 200) -> str:
         return ""
     linhas.reverse()
     return "\n".join(f"[canal {l['channel_id']}] {l['conteudo']}" for l in linhas)
+
+
+RACAS_VALIDAS = {"lobisomem": "Lobisomem", "vampiro": "Vampiro", "fada": "Fada", "aleatório": "Aleatório", "aleatorio": "Aleatório"}
+PADRAO_REGISTRO = re.compile(r"\[REGISTRAR:\s*(.+?)\s*\|\s*(.+?)\s*\]")
+
+
+def gravar_inscricao(discord_user_id: int, discord_nome: str, nick: str, raca: str, canal_id: int) -> bool:
+    """Grava ou atualiza a inscrição do usuário no Supabase (uma por pessoa)."""
+    try:
+        resp = requests.post(
+            f"{core.SUPABASE_URL}/rest/v1/inscricoes_evento?on_conflict=discord_user_id",
+            headers={**core.SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={
+                "discord_user_id": str(discord_user_id),
+                "discord_nome": discord_nome[:100],
+                "nick": nick[:64],
+                "raca": raca,
+                "canal_id": str(canal_id),
+                "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        print(f"[erro ao gravar inscrição] {e}")
+        return False
 
 
 def canal_evento(canal) -> bool:
@@ -388,6 +415,15 @@ async def atender_ticket(msg: discord.Message):
         except discord.HTTPException as e:
             print(f"[erro ao criar canal] {e}")
     texto = re.sub(r"\[CRIAR_CANAL:\s*.+?\]", "", resposta).strip()
+
+    # Registro de evento: a IA escreve [REGISTRAR: NICK | RAÇA] e o bot grava no Supabase.
+    for nick, raca_digitada in PADRAO_REGISTRO.findall(texto):
+        raca = RACAS_VALIDAS.get(raca_digitada.strip().lower())
+        if raca and gravar_inscricao(msg.author.id, msg.author.display_name, nick.strip(), raca, msg.channel.id):
+            pass
+        else:
+            print(f"[registro não gravado] nick={nick!r} raca={raca_digitada!r}")
+    texto = PADRAO_REGISTRO.sub("", texto).strip()
     if not texto:
         return
     if f"<@{EVENTS_BOT_ID}>" in texto:
