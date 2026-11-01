@@ -98,7 +98,10 @@ def url_login_discord():
 
 
 def login_callback(codigo):
-    """Troca o código pelo token do Discord, pega o ID do usuário e cria uma sessão do site."""
+    """Troca o código pelo token do Discord, pega o ID do usuário e cria uma sessão do site.
+    Devolve (token, None) em sucesso ou (None, motivo) em falha."""
+    if not codigo:
+        return None, "O Discord não enviou o código. Refaça o login pelo /auth/discord."
     r = requests.post(
         "https://discord.com/api/oauth2/token",
         data={
@@ -110,12 +113,12 @@ def login_callback(codigo):
     )
     if r.status_code != 200:
         print(f"[login] troca do código falhou: HTTP {r.status_code} {r.text[:300]}")
-        return None
+        return None, f"Discord recusou a troca do código (HTTP {r.status_code}): {r.text[:300]}"
     acesso = r.json().get("access_token")
     u = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {acesso}"}, timeout=10)
     if u.status_code != 200:
         print(f"[login] não consegui ler o usuário: HTTP {u.status_code} {u.text[:300]}")
-        return None
+        return None, f"Não consegui ler o usuário no Discord (HTTP {u.status_code}): {u.text[:300]}"
     user_id = u.json()["id"]
     token = secrets.token_urlsafe(32)
     _post("sessoes_site", {
@@ -123,7 +126,7 @@ def login_callback(codigo):
         "discord_user_id": user_id,
         "expira_em": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
     }, "resolution=merge-duplicates,return=minimal", "token_hash")
-    return token
+    return token, None
 
 
 def usuario_da_sessao(cabecalho_auth):
@@ -200,9 +203,9 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/auth/discord":
                 return self._enviar(302, redirecionar=url_login_discord())
             if url.path == "/auth/callback":
-                token = login_callback(q.get("code", [""])[0])
+                token, motivo = login_callback(q.get("code", [""])[0])
                 if not token:
-                    return self._enviar(400, {"erro": "Não foi possível fazer login com o Discord."})
+                    return self._enviar(400, {"erro": "Não foi possível fazer login com o Discord.", "motivo": motivo})
                 return self._enviar(302, redirecionar=f"{SITE_URL}#token={token}")
             if url.path == "/api/v1/saldo":
                 uid = usuario_da_sessao(self.headers.get("Authorization"))
