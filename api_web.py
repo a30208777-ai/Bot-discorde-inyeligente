@@ -109,10 +109,12 @@ def login_callback(codigo):
         timeout=10,
     )
     if r.status_code != 200:
+        print(f"[login] troca do código falhou: HTTP {r.status_code} {r.text[:300]}")
         return None
     acesso = r.json().get("access_token")
     u = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {acesso}"}, timeout=10)
     if u.status_code != 200:
+        print(f"[login] não consegui ler o usuário: HTTP {u.status_code} {u.text[:300]}")
         return None
     user_id = u.json()["id"]
     token = secrets.token_urlsafe(32)
