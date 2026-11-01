@@ -445,14 +445,12 @@ async def on_ready():
                 await enviar_chave_ao_dono(guild, chave)
         except requests.RequestException as e:
             print(f"[erro ao checar chave] {e}")
-    # Registra os comandos no menu "/" de cada servidor (aparece na hora).
-    for guild in bot.guilds:
-        try:
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-        except discord.HTTPException as e:
-            print(f"[erro ao sincronizar comandos em {guild.name}] {e}")
-    print(f"Bot logado como {bot.user}. Comandos sincronizados em {len(bot.guilds)} servidor(es).")
+    # Sincroniza os comandos "/" uma única vez, para todos os servidores (menos chamadas ao Discord).
+    try:
+        await bot.tree.sync()
+    except discord.HTTPException as e:
+        print(f"[erro ao sincronizar comandos] {e}")
+    print(f"Bot logado como {bot.user}. Servidores: {len(bot.guilds)}.")
 
 
 @bot.event
@@ -920,7 +918,7 @@ def iniciar_servidor_saude():
 
 # ----- Auto-acesso: o bot acessa a própria URL a cada X segundos (mantém o serviço acordado) -----
 SELF_URL = os.getenv("SELF_URL", "https://bot-discorde-frankfurt.onrender.com/")
-PING_INTERVALO = int(os.getenv("PING_INTERVALO", "5"))
+PING_INTERVALO = int(os.getenv("PING_INTERVALO", "300"))
 
 
 def iniciar_auto_acesso():
@@ -943,4 +941,13 @@ if __name__ == "__main__":
         raise SystemExit("Defina a variável DISCORD_TOKEN.")
     iniciar_servidor_saude()
     iniciar_auto_acesso()
-    bot.run(TOKEN)
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        # Ex.: 429 do Discord no login. Espera e reinicia o processo inteiro (sem sair com erro).
+        import sys
+        import time
+        espera = int(os.getenv("ESPERA_RECONEXAO", "600"))
+        print(f"[falha ao conectar: {e}] tentando de novo em {espera}s...")
+        time.sleep(espera)
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
